@@ -23,6 +23,15 @@ for your own registry:
 make IMAGE=ghcr.io/OWNER/exeuntu-codex:latest
 ```
 
+## Public container image
+
+A multi-architecture image for Linux AMD64 and ARM64 is published to GitHub
+Container Registry:
+
+```sh
+docker pull ghcr.io/aarons7/exeuntu-slim-codex:latest
+```
+
 ## Optional toolsets
 
 The `exeuntu-install` command restores omitted capabilities on demand:
