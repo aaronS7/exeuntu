@@ -13,77 +13,57 @@ FROM ubuntu:24.04
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
 
 
-# Remove minimization restrictions and install packages with documentation
-# We aim for a usable non-minimal system.
+# Install the focused base toolset. Ubuntu's documentation exclusions remain in
+# place; `exeuntu-install docs` can restore the full interactive documentation.
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirror://mirrors.ubuntu.com/mirrors.txt|' /etc/apt/sources.list && \
-        rm -f /etc/dpkg/dpkg.cfg.d/excludes /etc/dpkg/dpkg.cfg.d/01_nodoc && \
 	apt-get update && \
-	# Pull in all available security/bugfix updates for packages already
-	# in the base ubuntu:24.04 image. Without this we ship whatever was
-	# current when Canonical last rebuilt the base layer, which can be
-	# months behind (e.g. nginx Rift, CVE-2026-42945). The weekly cron
-	# rebuild + no-cache will keep this fresh going forward.
 	DEBIAN_FRONTEND=noninteractive apt-get -y \
 		-o Dpkg::Options::=--force-confold \
 		-o Dpkg::Options::=--force-confdef \
 		dist-upgrade && \
-	# Pre-configure debconf to avoid interactive prompts
 	echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
-	# Pre-configure pbuilder to avoid mirror prompt
-	echo 'pbuilder pbuilder/mirrorsite string http://archive.ubuntu.com/ubuntu' | debconf-set-selections && \
-	# Run unminimize with single 'y' response to restore documentation
-	echo 'y' | DEBIAN_FRONTEND=noninteractive unminimize && \
-	# Install man-db and reinstall all base packages to get their man pages back
-	DEBIAN_FRONTEND=noninteractive apt-get install -y man-db && \
-	DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall $(dpkg-query -f '${binary:Package} ' -W) && \
-	mandb -c && \
-	DEBIAN_FRONTEND=noninteractive apt-get install -y \
+	DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 		ca-certificates wget ripgrep \
-		locales locales-all \
-		git jq sqlite3 curl vim neovim lsof iproute2 less nginx \
-		make python3-pip python-is-python3 tree net-tools file build-essential \
-		pipx psmisc bsdmainutils sudo socat \
+		locales \
+		git gh jq sqlite3 curl vim neovim lsof iproute2 less nginx \
+		make tree net-tools file build-essential \
+		psmisc bsdmainutils sudo socat \
 		openssh-server openssh-client \
 		libcap2-bin unzip util-linux rsync \
-		iputils-ping socat netcat-openbsd \
-		ubuntu-server ubuntu-dev-tools ubuntu-standard \
-		man-db manpages manpages-dev \
-		mitmproxy \
-		systemd systemd-sysv \
+		iputils-ping netcat-openbsd \
+		systemd systemd-sysv dbus-user-session \
 		atop btop iotop ncdu \
-		docker.io docker-buildx docker-compose-v2 \
-		bubblewrap gh dbus-user-session \
-		git \
-		&& apt-get remove -y pollinate ubuntu-fan && \
-		# openssh-server generates host keys during package configuration.
-		# Do not bake those per-image private keys into exeuntu.
-		rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
-		# Allow non-root users to use ping without sudo by granting CAP_NET_RAW
-		setcap cap_net_raw=+ep /usr/bin/ping && \
-	# Remove policy-rc.d so services can start normally (the base image includes this
-	# to prevent services from starting during build, but we run systemd at runtime)
-	rm -f /usr/sbin/policy-rc.d
+		bubblewrap && \
+	locale-gen en_US.UTF-8 && \
+	update-locale LANG=en_US.UTF-8 && \
+	# openssh-server generates host keys during package configuration.
+	# Do not bake those per-image private keys into exeuntu.
+	rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
+	# Allow non-root users to use ping without sudo by granting CAP_NET_RAW.
+	setcap cap_net_raw=+ep /usr/bin/ping && \
+	# Remove policy-rc.d so services can start normally under systemd at runtime.
+	rm -f /usr/sbin/policy-rc.d && \
+	apt-get clean && \
+	rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 # Install Tailscale (keyring method, per https://tailscale.com/install.sh)
 # This must run after ca-certificates and curl are installed.
 RUN curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg && \
     curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list && \
-    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tailscale
-
-# Install latest stable Go from go.dev (the golang-go apt package lags behind)
-RUN ARCH=$(dpkg --print-architecture) && \
-    GO_VERSION=$(curl -fsSL 'https://go.dev/dl/?mode=json' | jq -r '.[0].version') && \
-    curl -fsSL "https://go.dev/dl/${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -xzC /usr/local && \
-    ln -s /usr/local/go/bin/go /usr/local/bin/go && \
-    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tailscale && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=exeuntu-cli /out/exeuntu /usr/local/bin/exeuntu
-
-# Install uv to /usr/local/bin
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+COPY exeuntu-install /usr/local/bin/exeuntu-install
+RUN chmod 0755 /usr/local/bin/exeuntu-install
 
 # Configure systemd
-RUN rm /etc/systemd/system/multi-user.target.wants/console-setup.service \
+RUN rm -f /etc/systemd/system/multi-user.target.wants/console-setup.service \
 		/etc/systemd/system/multi-user.target.wants/ModemManager.service \
 		/etc/systemd/system/multi-user.target.wants/snapd.* \
 		/etc/systemd/system/multi-user.target.wants/unattended-upgrades.* \
@@ -144,7 +124,7 @@ RUN rm /etc/systemd/system/multi-user.target.wants/console-setup.service \
 		apt-daily.timer \
 		plymouth-log.service && \
 	# systemd-logind is disabled but not masked. It's involved in populating the XDG runtime dir sockets... somehow
-	systemctl disable docker.service containerd.service getty.target systemd-logind.service tailscaled.service \
+	(systemctl disable docker.service containerd.service getty.target systemd-logind.service tailscaled.service \
 		nginx.service \
                    console-getty.service \
 		   atop.service \
@@ -170,7 +150,7 @@ RUN rm /etc/systemd/system/multi-user.target.wants/console-setup.service \
 		   atopacct.service \
 		   sysstat.service \
                    systemd-hwdb-update.service \
-		   multipathd.service && \
+		   multipathd.service || true) && \
 	mkdir -p /etc/systemd/system.conf.d && \
     		echo '[Manager]' > /etc/systemd/system.conf.d/container-overrides.conf && \
     		echo 'LogLevel=info' >> /etc/systemd/system.conf.d/container-overrides.conf && \
@@ -188,7 +168,6 @@ RUN usermod -l exedev -c "exe.dev user" ubuntu && \
 	mv /home/ubuntu /home/exedev && \
 	usermod -d /home/exedev exedev && \
 	usermod -aG sudo exedev && \
-	usermod -aG docker exedev && \
 	sed -i 's/^ubuntu:/exedev:/' /etc/subuid /etc/subgid && \
 	echo 'exedev ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
 	echo 'Defaults:exedev verifypw=any' >> /etc/sudoers && \

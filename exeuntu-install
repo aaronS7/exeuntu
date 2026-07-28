@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Install optional toolsets omitted from the Codex-only exeuntu image.
+
+Usage:
+  exeuntu-install <toolset> [version]
+
+Toolsets:
+  ubuntu-full   Ubuntu server, standard, and development metapackages
+  locales-all  Every locale supplied by Ubuntu
+  docker       Docker Engine, Buildx, and Compose with exedev access
+  go [version] Latest stable Go, or a version such as 1.26.5
+  python-tools pip, pipx, and mitmproxy
+  docs          man pages and documentation for installed packages
+EOF
+}
+
+if [[ $# -lt 1 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+if [[ ${EUID} -ne 0 ]]; then
+    exec sudo -- "$0" "$@"
+fi
+
+apt_install() {
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+}
+
+install_go() {
+    local requested=${1:-}
+    local arch go_arch metadata version filename checksum tmp
+
+    case "$(dpkg --print-architecture)" in
+        amd64) go_arch=amd64 ;;
+        arm64) go_arch=arm64 ;;
+        *) echo "Unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;;
+    esac
+
+    if [[ -n "$requested" ]]; then
+        metadata=$(curl -fsSL 'https://go.dev/dl/?mode=json&include=all')
+        version=$requested
+        [[ $version == go* ]] || version="go${version}"
+    else
+        metadata=$(curl -fsSL 'https://go.dev/dl/?mode=json')
+        version=$(jq -r '.[0].version' <<<"$metadata")
+    fi
+
+    filename="${version}.linux-${go_arch}.tar.gz"
+    checksum=$(jq -r --arg file "$filename" \
+        '[.[].files[] | select(.filename == $file) | .sha256][0] // empty' <<<"$metadata")
+    if [[ -z "$checksum" ]]; then
+        echo "Go release not found: $version ($go_arch)" >&2
+        exit 1
+    fi
+
+    tmp=$(mktemp)
+    if ! curl -fsSL "https://go.dev/dl/${filename}" -o "$tmp"; then
+        rm -f "$tmp"
+        exit 1
+    fi
+    if ! echo "$checksum  $tmp" | sha256sum --check --status; then
+        rm -f "$tmp"
+        echo "Go archive checksum verification failed" >&2
+        exit 1
+    fi
+    rm -rf /usr/local/go
+    tar -xzf "$tmp" -C /usr/local
+    rm -f "$tmp"
+    ln -sf /usr/local/go/bin/go /usr/local/bin/go
+    ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+    go version
+}
+
+case "$1" in
+    ubuntu-full)
+        apt_install ubuntu-server ubuntu-standard ubuntu-dev-tools
+        ;;
+    locales-all)
+        apt_install locales-all
+        ;;
+    docker)
+        apt_install docker.io docker-buildx docker-compose-v2
+        usermod -aG docker exedev
+        # Overlay-on-overlay is not supported by every nested container runtime.
+        # Fall back to vfs only when exeuntu itself is running on overlayfs.
+        if [[ $(findmnt -n -o FSTYPE /) == overlay* ]]; then
+            mkdir -p /etc/docker
+            if [[ -f /etc/docker/daemon.json ]]; then
+                tmp=$(mktemp)
+                jq '. + {"storage-driver": "vfs"}' /etc/docker/daemon.json > "$tmp"
+                install -m 0644 "$tmp" /etc/docker/daemon.json
+                rm -f "$tmp"
+            else
+                printf '%s\n' '{"storage-driver":"vfs"}' > /etc/docker/daemon.json
+            fi
+        fi
+        systemctl unmask docker.service containerd.service >/dev/null 2>&1 || true
+        systemctl enable containerd.service docker.service
+        systemctl restart containerd.service docker.service
+        echo "Docker installed. Start a new login shell for group membership to refresh."
+        ;;
+    go)
+        install_go "${2:-}"
+        ;;
+    python-tools)
+        apt_install python3-pip python-is-python3 pipx mitmproxy
+        ;;
+    docs)
+        rm -f /etc/dpkg/dpkg.cfg.d/excludes /etc/dpkg/dpkg.cfg.d/01_nodoc
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y man-db manpages manpages-dev
+        dpkg-query -f '${binary:Package}\n' -W | \
+            xargs -r -n 100 apt-get install -y --reinstall
+        mandb -c
+        apt-get clean
+        rm -rf /var/lib/apt/lists/*
+        ;;
+    *)
+        echo "Unknown toolset: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

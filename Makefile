@@ -13,6 +13,7 @@ build: build-exeuntu
 
 test:
 	cd cli && go test ./...
+	bash -n exeuntu-install init-wrapper.sh motd-snippet.bash
 
 run: build-exeuntu
 	docker run -it \

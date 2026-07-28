@@ -22,7 +22,7 @@ if [[ $- == *i* ]]; then
 
     hints=(
 	  $'Read exe.dev docs at https://exe.dev/docs'
-	  $'Docker is installed and works; try "docker run --rm alpine:latest echo hello world"'
+	  $'Need Docker-in-Docker? Install it with "sudo exeuntu-install docker"'
 	  "$(printf 'If you run an http webserver on port 4444, you can access it securely at https://%s:4444\nTry it with "python3 -m http.server 4444"' "$(hostname -f)")"
 	  $'ssh into exe.dev to manage the HTTP proxy and sharing for this VM'
 	  "$(printf 'There is a web-based terminal at %s' "$(_exe_url xterm)")"
