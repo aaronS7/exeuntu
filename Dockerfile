@@ -202,6 +202,10 @@ RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/exedev/.bashrc && \
     echo 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' >> /home/exedev/.bashrc && \
     echo 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' >> /home/exedev/.profile
 
+# Install Herdr in the user-local path so its built-in updater remains writable.
+RUN curl -fsSL https://herdr.dev/install.sh | HERDR_INSTALL_DIR=/home/exedev/.local/bin sh && \
+    /home/exedev/.local/bin/herdr --version
+
 # Configure git to use 'main' as default branch name
 RUN git config --global init.defaultBranch main
 

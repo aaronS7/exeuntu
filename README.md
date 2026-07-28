@@ -1,8 +1,9 @@
 # exeuntu — Codex-only variant
 
 A focused exeuntu image for developers who use Codex as their coding agent.
-It remains based on Ubuntu 24.04 and retains systemd, Tailscale, common command-line
-development tools, the exe.dev setup service, and Codex LLM-integration configuration.
+It remains based on Ubuntu 24.04 and retains systemd, Tailscale, Herdr, common
+command-line development tools, the exe.dev setup service, and Codex
+LLM-integration configuration.
 
 This branch removes the bundled Claude Code, Pi, and Shelley agents, along with
 Pi's exe.dev extension and Shelley's headless Chromium runtime. It also omits the
