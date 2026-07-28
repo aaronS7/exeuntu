@@ -8,12 +8,10 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/boldsoftware/exe.dev/exeuntu/internal/agentupdate"
 	"github.com/boldsoftware/exe.dev/exeuntu/internal/guestllm"
-	"github.com/boldsoftware/exe.dev/exeuntu/internal/piupdate"
 	"github.com/urfave/cli/v3"
 )
 
@@ -23,10 +21,7 @@ var gitVersion = "unknown"
 
 var errUsage = errors.New("usage")
 
-var (
-	updateAgent = agentupdate.Update
-	updatePi    = piupdate.Update
-)
+var updateAgent = agentupdate.Update
 
 func main() {
 	if err := run(os.Args, os.Stdout, os.Stderr); err != nil {
@@ -67,7 +62,7 @@ type versionInfo struct {
 func newRootCommand(stdout, stderr io.Writer) *cli.Command {
 	return &cli.Command{
 		Name:        appName,
-		Usage:       "manage exeuntu guest tooling",
+		Usage:       "manage Codex tooling in exeuntu",
 		UsageText:   "exeuntu <command>",
 		HideVersion: true,
 		Writer:      stdout,
@@ -127,10 +122,9 @@ func versionCommand() *cli.Command {
 func configureCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "configure",
-		Usage:     "configure coding agents to use the LLM integration",
+		Usage:     "configure Codex to use the LLM integration",
 		UsageText: "exeuntu configure <agent>",
 		Commands: []*cli.Command{
-			configureClientCommand("claude", guestllm.ClientClaudeCode),
 			configureClientCommand("codex", guestllm.ClientCodex),
 		},
 		OnUsageError: usageErrorHandler,
@@ -181,11 +175,11 @@ func configureClientCommand(commandName, client string) *cli.Command {
 }
 
 func updateCommand() *cli.Command {
-	return agentInstallerCommandGroup("update", "update installed coding agents")
+	return agentInstallerCommandGroup("update", "update Codex")
 }
 
 func installCommand() *cli.Command {
-	return agentInstallerCommandGroup("install", "install coding agents")
+	return agentInstallerCommandGroup("install", "install Codex")
 }
 
 func agentInstallerCommandGroup(commandName, usage string) *cli.Command {
@@ -194,9 +188,7 @@ func agentInstallerCommandGroup(commandName, usage string) *cli.Command {
 		Usage:     usage,
 		UsageText: "exeuntu " + commandName + " <agent>",
 		Commands: []*cli.Command{
-			agentInstallerCommand(commandName, agentupdate.AgentClaude, commandName+" Claude Code", "Claude Code version to install instead of latest"),
 			agentInstallerCommand(commandName, agentupdate.AgentCodex, commandName+" Codex", "Codex release version to install instead of latest"),
-			piInstallerCommand(commandName),
 		},
 		OnUsageError: usageErrorHandler,
 		Action: func(_ context.Context, cmd *cli.Command) error {
@@ -207,14 +199,10 @@ func agentInstallerCommandGroup(commandName, usage string) *cli.Command {
 }
 
 func llmConfigureUsage(commandName string) string {
-	switch commandName {
-	case "codex":
+	if commandName == "codex" {
 		return "configure Codex to use the LLM integration"
-	case "claude":
-		return "configure Claude Code to use the LLM integration"
-	default:
-		return "configure guest LLM client"
 	}
+	return "configure guest LLM client"
 }
 
 func agentInstallerCommand(commandName string, agent agentupdate.Agent, usage, versionUsage string) *cli.Command {
@@ -238,39 +226,6 @@ func agentInstallerCommand(commandName string, agent agentupdate.Agent, usage, v
 			defer cancel()
 			_, err := updateAgent(ctx, agentupdate.Options{
 				Agent:   agent,
-				Version: cmd.String("version"),
-				Stdout:  installerStdout(commandName, cmd),
-			})
-			return err
-		},
-	}
-}
-
-func piInstallerCommand(commandName string) *cli.Command {
-	return &cli.Command{
-		Name:      "pi",
-		Usage:     commandName + " Pi coding agent",
-		UsageText: "exeuntu " + commandName + " pi [options]",
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:  "home",
-				Usage: "home directory override",
-			},
-			&cli.StringFlag{
-				Name:   "version",
-				Usage:  "Pi version to install instead of latest",
-				Config: cli.StringConfig{TrimSpace: true},
-			},
-		},
-		OnUsageError: usageErrorHandler,
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			if err := rejectArgs(cmd); err != nil {
-				return err
-			}
-			ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-			defer cancel()
-			_, err := updatePi(ctx, piupdate.Options{
-				HomeDir: strings.TrimSpace(cmd.String("home")),
 				Version: cmd.String("version"),
 				Stdout:  installerStdout(commandName, cmd),
 			})

@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func TestConfigureClientWritesCodexConfigFromShelleyDiscovery(t *testing.T) {
+func TestConfigureClientWritesCodexConfigFromLLMDiscovery(t *testing.T) {
 	home := t.TempDir()
 	fixture := &discoveryFixture{
 		integrations: []reflectionIntegration{
@@ -70,9 +70,6 @@ func TestConfigureClientWritesCodexConfigFromShelleyDiscovery(t *testing.T) {
 	if !strings.Contains(state, codexConfigKey) {
 		t.Fatalf("state missing codex managed file hash:\n%s", state)
 	}
-	if strings.Contains(state, claudeSettingsKey) {
-		t.Fatalf("configure codex wrote claude state:\n%s", state)
-	}
 }
 
 func TestReflectionIntegrationsURLUsesDocumentedDefaultHost(t *testing.T) {
@@ -85,45 +82,6 @@ func TestReflectionIntegrationsURLUsesDocumentedDefaultHost(t *testing.T) {
 	}
 	if got != "https://reflection.int.exe.xyz/integrations" {
 		t.Fatalf("integrations URL = %q", got)
-	}
-}
-
-func TestConfigureClientWritesClaudeConfigFromShelleyDiscovery(t *testing.T) {
-	home := t.TempDir()
-	fixture := &discoveryFixture{
-		integrations: []reflectionIntegration{{Name: "agentllm", Type: "llm"}},
-		catalogs: map[string]llmModelCatalog{
-			"agentllm.int.exe.xyz": catalog(
-				llmCatalogModel{ID: "anthropic/claude-opus-4-7", Provider: "anthropic", NativeID: "claude-opus-4-7", APIs: []string{"anthropic_messages"}},
-			),
-		},
-	}
-
-	result, err := ConfigureClient(context.Background(), ClientClaudeCode, Options{
-		HomeDir:    home,
-		HTTPClient: fixture.client(t),
-	})
-	if err != nil {
-		t.Fatalf("ConfigureClient: %v", err)
-	}
-	requireResult(t, result, ClientClaudeCode, "configured")
-
-	var claude map[string]any
-	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(home, ".claude", "settings.json"))), &claude); err != nil {
-		t.Fatalf("parse claude settings: %v", err)
-	}
-	if got := claude["apiKeyHelper"]; got != "printf implicit" {
-		t.Fatalf("apiKeyHelper = %v, want printf implicit", got)
-	}
-	env, _ := claude["env"].(map[string]any)
-	if _, ok := env["ANTHROPIC_API_KEY"]; ok {
-		t.Fatalf("claude env should not set ANTHROPIC_API_KEY: %#v", env)
-	}
-	if got := env["ANTHROPIC_BASE_URL"]; got != "https://agentllm.int.exe.xyz" {
-		t.Fatalf("ANTHROPIC_BASE_URL = %v, want integration base URL", got)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); !os.IsNotExist(err) {
-		t.Fatalf("configure claude wrote codex config: %v", err)
 	}
 }
 
@@ -417,20 +375,19 @@ func TestConfigureClientUpdatesPreviouslyManagedConfig(t *testing.T) {
 	}
 }
 
-func TestConfigurePrintsEveryRequestedClientResult(t *testing.T) {
+func TestConfigurePrintsCodexResult(t *testing.T) {
 	home := t.TempDir()
 	fixture := &discoveryFixture{
 		integrations: []reflectionIntegration{{Name: "agentllm", Type: "llm"}},
 		catalogs: map[string]llmModelCatalog{
 			"agentllm.int.exe.xyz": catalog(
 				llmCatalogModel{ID: "openai/gpt-5.5", Provider: "openai", NativeID: "gpt-5.5", APIs: []string{"openai_responses"}},
-				llmCatalogModel{ID: "anthropic/claude-opus-4-7", Provider: "anthropic", NativeID: "claude-opus-4-7", APIs: []string{"anthropic_messages"}},
 			),
 		},
 	}
 	var stdout bytes.Buffer
 
-	results, err := Configure(context.Background(), []string{ClientCodex, ClientClaudeCode}, Options{
+	results, err := Configure(context.Background(), []string{ClientCodex}, Options{
 		HomeDir:    home,
 		HTTPClient: fixture.client(t),
 		Stdout:     &stdout,
@@ -438,13 +395,11 @@ func TestConfigurePrintsEveryRequestedClientResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("results = %#v, want two", results)
+	if len(results) != 1 {
+		t.Fatalf("results = %#v, want one", results)
 	}
-	for _, want := range []string{"codex: configured", "claude: configured"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
-		}
+	if !strings.Contains(stdout.String(), "codex: configured") {
+		t.Fatalf("stdout = %q, want codex result", stdout.String())
 	}
 }
 

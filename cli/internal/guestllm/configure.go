@@ -21,12 +21,10 @@ import (
 const (
 	DefaultReflectionURL = "https://reflection.int.exe.xyz"
 
-	ClientCodex      = "codex"
-	ClientClaudeCode = "claude"
+	ClientCodex = "codex"
 
-	codexConfigKey    = "codex_config"
-	claudeSettingsKey = "claude_settings"
-	stateVersion      = 1
+	codexConfigKey = "codex_config"
+	stateVersion   = 1
 )
 
 type Options struct {
@@ -69,10 +67,9 @@ type llmCatalogModel struct {
 }
 
 type discoveredIntegration struct {
-	name           string
-	baseURL        string
-	supportsCodex  bool
-	supportsClaude bool
+	name          string
+	baseURL       string
+	supportsCodex bool
 }
 
 type managedState struct {
@@ -137,7 +134,7 @@ func Configure(ctx context.Context, clients []string, opts Options) ([]Result, e
 }
 
 func configureClient(home, client string, integrations []discoveredIntegration, integrationName string, st *managedState) (Result, error) {
-	if client != ClientCodex && client != ClientClaudeCode {
+	if client != ClientCodex {
 		return Result{}, fmt.Errorf("unsupported client %q", client)
 	}
 	integration, skip, err := selectClientIntegration(integrations, client, integrationName)
@@ -148,25 +145,11 @@ func configureClient(home, client string, integrations []discoveredIntegration, 
 		return Result{Client: client, Status: "skipped", Detail: skip}, nil
 	}
 
-	var content []byte
-	var stateKey string
-	var path string
-	switch client {
-	case ClientCodex:
-		content, err = codexConfig(integration.name, integration.baseURL)
-		stateKey = codexConfigKey
-		path = filepath.Join(home, ".codex", "config.toml")
-	case ClientClaudeCode:
-		content, err = claudeSettings(integration.baseURL)
-		stateKey = claudeSettingsKey
-		path = filepath.Join(home, ".claude", "settings.json")
-	default:
-		return Result{}, fmt.Errorf("unsupported client %q", client)
-	}
+	content, err := codexConfig(integration.name, integration.baseURL)
 	if err != nil {
 		return Result{}, err
 	}
-	res, err := applyManagedFile(path, stateKey, content, st)
+	res, err := applyManagedFile(filepath.Join(home, ".codex", "config.toml"), codexConfigKey, content, st)
 	if err != nil {
 		return Result{}, err
 	}
@@ -208,15 +191,13 @@ func discoverIntegrations(ctx context.Context, opts Options) ([]discoveredIntegr
 				continue
 			}
 			switch model.Provider {
-			case "anthropic":
-				discovered.supportsClaude = discovered.supportsClaude || hasAPI(model.APIs, "anthropic_messages")
 			case "openai":
 				discovered.supportsCodex = discovered.supportsCodex || hasAnyAPI(model.APIs, "openai_responses", "openai_chat")
 			case "fireworks":
 				discovered.supportsCodex = discovered.supportsCodex || hasAPI(model.APIs, "openai_chat")
 			}
 		}
-		if discovered.supportsCodex || discovered.supportsClaude {
+		if discovered.supportsCodex {
 			out = append(out, discovered)
 		}
 	}
@@ -324,15 +305,8 @@ func selectClientIntegration(integrations []discoveredIntegration, client, integ
 		if integrationName != "" && integration.name != integrationName {
 			continue
 		}
-		switch client {
-		case ClientCodex:
-			if integration.supportsCodex {
-				available = append(available, integration)
-			}
-		case ClientClaudeCode:
-			if integration.supportsClaude {
-				available = append(available, integration)
-			}
+		if integration.supportsCodex {
+			available = append(available, integration)
 		}
 	}
 	if len(available) == 0 {
@@ -377,23 +351,6 @@ func codexConfig(integrationName, baseURL string) ([]byte, error) {
 	fmt.Fprintf(&b, "base_url = %s\n", quoteTOMLString(strings.TrimRight(baseURL, "/")+"/v1"))
 	b.WriteString("requires_openai_auth = false\n")
 	return b.Bytes(), nil
-}
-
-func claudeSettings(baseURL string) ([]byte, error) {
-	if err := validateConfigURL(baseURL); err != nil {
-		return nil, fmt.Errorf("claude-code base url: %w", err)
-	}
-	body := map[string]any{
-		"apiKeyHelper": "printf implicit",
-		"env": map[string]string{
-			"ANTHROPIC_BASE_URL": strings.TrimRight(baseURL, "/"),
-		},
-	}
-	data, err := json.MarshalIndent(body, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
 }
 
 func validateConfigURL(raw string) error {

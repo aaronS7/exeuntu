@@ -1,6 +1,3 @@
-# Stage 1: Get Chrome/Chromium from chromedp/headless-shell
-FROM docker.io/chromedp/headless-shell:stable AS chrome
-
 # Build the guest-facing exeuntu helper.
 FROM docker.io/library/golang:1.26.5 AS exeuntu-cli
 ARG EXEUNTU_GIT_VERSION=unknown
@@ -54,22 +51,15 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirror://mirrors.ubuntu.c
 		mitmproxy \
 		systemd systemd-sysv \
 		atop btop iotop ncdu \
-		git \
-		libglib2.0-0 libnss3 libx11-6 libxcomposite1 libxdamage1 \
-		libxext6 libxi6 libxrandr2 libgbm1 libgtk-3-0 \
-		fonts-noto-color-emoji fonts-symbola \
 		docker.io docker-buildx docker-compose-v2 \
-		imagemagick ffmpeg \
-		bubblewrap \
-		gh \
-		dbus-user-session \
+		bubblewrap gh dbus-user-session \
+		git \
 		&& apt-get remove -y pollinate ubuntu-fan && \
 		# openssh-server generates host keys during package configuration.
 		# Do not bake those per-image private keys into exeuntu.
 		rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
 		# Allow non-root users to use ping without sudo by granting CAP_NET_RAW
 		setcap cap_net_raw=+ep /usr/bin/ping && \
-	fc-cache -f -v && \
 	# Remove policy-rc.d so services can start normally (the base image includes this
 	# to prevent services from starting during build, but we run systemd at runtime)
 	rm -f /usr/sbin/policy-rc.d
@@ -220,13 +210,8 @@ ENV EXEUNTU=1
 # might be useful?
 # STOPSIGNAL SIGRTMIN+3
 
-
-# Copy the self-contained Chrome bundle from chromedp/headless-shell
-COPY --from=chrome /headless-shell /headless-shell
-ENV PATH="/usr/local/bin:/headless-shell:${PATH}"
-
-RUN mkdir -p /home/exedev /home/exedev/.config/shelley && \
-    chown exedev:exedev /home/exedev /home/exedev/.config /home/exedev/.config/shelley
+RUN mkdir -p /home/exedev /home/exedev/.codex && \
+    chown exedev:exedev /home/exedev /home/exedev/.codex
 
 USER exedev
 
@@ -251,13 +236,6 @@ RUN rm -rf /etc/update-motd.d/* /etc/motd && touch /home/exedev/.hushlogin && ch
 COPY motd-snippet.bash /tmp/motd-snippet.bash
 RUN cat /tmp/motd-snippet.bash >> /home/exedev/.bashrc && rm /tmp/motd-snippet.bash
 
-# Create systemd socket and service for Shelley (socket activation).
-# The shelley binary itself is installed at vm creation.
-COPY shelley.socket /etc/systemd/system/shelley.socket
-COPY shelley.service /etc/systemd/system/shelley.service
-RUN chmod 644 /etc/systemd/system/shelley.socket /etc/systemd/system/shelley.service && \
-    systemctl enable shelley.socket
-
 # Create systemd oneshot service for /exe.dev/setup script
 COPY exe-setup.service /etc/systemd/system/exe-setup.service
 RUN chmod 644 /etc/systemd/system/exe-setup.service && \
@@ -268,69 +246,17 @@ RUN chmod 644 /etc/systemd/system/exe-setup.service && \
 # It would be better if you could indicate that via an env variable or something.
 COPY init-wrapper.sh /usr/local/bin/init
 
-# Create config directories for LLM agents
-RUN mkdir -p /home/exedev/.claude /home/exedev/.codex /home/exedev/.pi && \
-    chown -R exedev:exedev /home/exedev/.claude /home/exedev/.codex /home/exedev/.pi
+# Configure Codex and install the shared agent instructions.
+RUN mkdir -p /home/exedev/.codex && \
+    chown -R exedev:exedev /home/exedev/.codex
+COPY AGENTS.md /home/exedev/.codex/AGENTS.md
+RUN chown exedev:exedev /home/exedev/.codex/AGENTS.md
 
-# Copy LLM agent instructions to Claude, Codex, and Shelley config directories
-# Shelley uses ~/.config/shelley/ (XDG convention, directory already created above)
-COPY AGENTS.md /home/exedev/.config/shelley/AGENTS.md
-RUN chown exedev:exedev /home/exedev/.config/shelley/AGENTS.md && \
-    ln -s /home/exedev/.config/shelley/AGENTS.md /home/exedev/.claude/CLAUDE.md && \
-    ln -s /home/exedev/.config/shelley/AGENTS.md /home/exedev/.codex/AGENTS.md && \
-    ln -s /home/exedev/.config/shelley/AGENTS.md /home/exedev/.pi/AGENTS.md
-
-# Install Claude and Codex through exeuntu's direct updaters.
+# Install Codex through exeuntu's direct updater.
 USER root
-RUN exeuntu update claude && \
-    test -x /usr/local/bin/claude && \
-    /usr/local/bin/claude --version
 RUN exeuntu update codex && \
     test -x /usr/local/bin/codex && \
     /usr/local/bin/codex --version
-
-# Install pi (pi-coding-agent) through exeuntu's updater.
-ARG PI_VERSION=
-USER exedev
-RUN if [ -n "${PI_VERSION}" ]; then \
-        exeuntu update pi --home /home/exedev --version "${PI_VERSION}"; \
-    else \
-        exeuntu update pi --home /home/exedev; \
-    fi && \
-    test -x /home/exedev/.local/bin/pi && \
-    /home/exedev/.local/bin/pi --version
-USER root
-RUN ln -sf /home/exedev/.local/bin/pi /usr/local/bin/pi
-
-# Install the pi exe.dev extension (LLM integration + environment context).
-# The bundled public catalog supplies pricing and compatibility metadata only;
-# reflection-discovered integrations supply every model and provider route.
-COPY pi-extension/ /home/exedev/.pi/agent/extensions/exe-dev/
-RUN curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
-      https://exe.dev/llm-gateway-models.json \
-      -o /home/exedev/.pi/agent/extensions/exe-dev/catalog.json && \
-    jq -e '.schemaVersion | numbers' \
-      /home/exedev/.pi/agent/extensions/exe-dev/catalog.json > /dev/null
-RUN chown -R exedev:exedev /home/exedev/.pi/agent
-
-# Pre-install fd at the path pi checks first (~/.pi/agent/bin/fd), so pi
-# doesn't try (and on a fresh VM, often fail with a GitHub API 403) to
-# download it on first use.
-RUN ARCH=$(uname -m) && \
-    case ${ARCH} in \
-        x86_64) FD_ARCH="x86_64-unknown-linux-gnu" ;; \
-        aarch64|arm64) FD_ARCH="aarch64-unknown-linux-gnu" ;; \
-        *) echo "Unsupported architecture: ${ARCH}" && exit 1 ;; \
-    esac && \
-    FD_VERSION=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/sharkdp/fd/releases/latest | sed 's|.*/tag/||') && \
-    mkdir -p /home/exedev/.pi/agent/bin && \
-    TMPDIR=$(mktemp -d) && \
-    curl -fsSL "https://github.com/sharkdp/fd/releases/download/${FD_VERSION}/fd-${FD_VERSION}-${FD_ARCH}.tar.gz" | \
-        tar -xz -C "${TMPDIR}" && \
-    mv "${TMPDIR}/fd-${FD_VERSION}-${FD_ARCH}/fd" /home/exedev/.pi/agent/bin/fd && \
-    rm -rf "${TMPDIR}" && \
-    chmod 0755 /home/exedev/.pi/agent/bin/fd && \
-    chown -R exedev:exedev /home/exedev/.pi/agent/bin
 
 # Custom nginx config and index page (nginx is installed but disabled by default)
 COPY nginx.conf /etc/nginx/sites-available/default
@@ -341,9 +267,8 @@ RUN chmod 644 /var/www/html/index.html
 COPY xterm-ghostty.terminfo /tmp/xterm-ghostty.terminfo
 RUN tic -x - < /tmp/xterm-ghostty.terminfo && rm /tmp/xterm-ghostty.terminfo
 
-# Expose the web server ports
-EXPOSE 8000 9999
+# Expose the default web server port.
+EXPOSE 8000
 
 LABEL "exe.dev/login-user"="exedev"
-LABEL "exe.dev/install-shelley"="true"
 CMD ["/usr/local/bin/init"]

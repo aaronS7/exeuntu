@@ -1,11 +1,18 @@
+IMAGE ?= exeuntu-codex:latest
+
+.PHONY: default build-exeuntu build run run-bash test
+
 default: build-exeuntu
 
-build-exeuntu: ## Build the exeuntu Docker image locally
-	@echo "Building exeuntu Docker image..."
-	docker build -t ghcr.io/boldsoftware/exeuntu:latest .
-	@echo "✓ Image built locally as ghcr.io/boldsoftware/exeuntu:latest"
+build-exeuntu: ## Build the Codex-only exeuntu Docker image locally
+	@echo "Building $(IMAGE)..."
+	docker build -t $(IMAGE) .
+	@echo "✓ Image built locally as $(IMAGE)"
 
 build: build-exeuntu
+
+test:
+	cd cli && go test ./...
 
 run: build-exeuntu
 	docker run -it \
@@ -17,7 +24,7 @@ run: build-exeuntu
 	  --tmpfs /run/lock \
 	  --tmpfs /tmp \
 	  --tmpfs /sys/fs/cgroup:rw \
-	  ghcr.io/boldsoftware/exeuntu:latest
+	  $(IMAGE)
 
 run-bash: build-exeuntu
 	docker run -it \
@@ -29,4 +36,4 @@ run-bash: build-exeuntu
 	  --tmpfs /run/lock \
 	  --tmpfs /tmp \
 	  --tmpfs /sys/fs/cgroup:rw \
-	  ghcr.io/boldsoftware/exeuntu:latest bash
+	  $(IMAGE) bash

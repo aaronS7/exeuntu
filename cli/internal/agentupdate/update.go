@@ -16,10 +16,7 @@ import (
 
 type Agent string
 
-const (
-	AgentClaude Agent = "claude"
-	AgentCodex  Agent = "codex"
-)
+const AgentCodex Agent = "codex"
 
 type Options struct {
 	Agent       Agent
@@ -38,14 +35,10 @@ type Result struct {
 }
 
 func Update(ctx context.Context, opts Options) (Result, error) {
-	switch opts.Agent {
-	case AgentClaude:
-		return updateClaude(ctx, opts)
-	case AgentCodex:
-		return updateCodex(ctx, opts)
-	default:
+	if opts.Agent != AgentCodex {
 		return Result{}, fmt.Errorf("unsupported agent updater: %q", opts.Agent)
 	}
+	return updateCodex(ctx, opts)
 }
 
 type updater struct {

@@ -1,13 +1,34 @@
-# exeuntu
+# exeuntu — Codex-only variant
 
-exeuntu is available at http://ghcr.io/boldsoftware/exeuntu
+A smaller exeuntu image for developers who use Codex as their coding agent.
+It remains based on Ubuntu 24.04 and retains systemd, Docker, common development
+tools, the exe.dev setup service, and Codex LLM-integration configuration.
 
-exeuntu is the default base image for [exe.dev](https://exe.dev/). It is kitted-out
-for developers, based on ubuntu24.04, and includes systemd.
+This branch removes the bundled Claude Code, Pi, and Shelley agents, along with
+Pi's exe.dev extension and Shelley's headless Chromium runtime.
 
-We believe that minimal containers make for terrible developer (and agent)
-experiences, so exeuntu includes a lot of stuff, mostly from apt.
+## Build
 
-You can build exeuntu with Docker, but running it, including systemd,
-is difficult with Docker.
+```sh
+make
+```
 
+The default local image name is `exeuntu-codex:latest`. Override it when building
+for your own registry:
+
+```sh
+make IMAGE=ghcr.io/OWNER/exeuntu-codex:latest
+```
+
+## Test
+
+```sh
+make test
+```
+
+## Further size reductions
+
+The image intentionally still contains much of upstream exeuntu's broad Ubuntu
+developer toolset. A later package audit can remove documentation, desktop/media
+libraries, Ubuntu metapackages, or language toolchains that your workloads do not
+need.
