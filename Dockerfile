@@ -263,6 +263,7 @@ RUN chown exedev:exedev /home/exedev/.codex/AGENTS.md
 USER root
 RUN exeuntu update codex && \
     test -x /usr/local/bin/codex && \
+    test -x /usr/local/bin/codex-code-mode-host && \
     /usr/local/bin/codex --version
 
 # Custom nginx config and index page (nginx is installed but disabled by default)
