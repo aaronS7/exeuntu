@@ -9,43 +9,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags osusergo,netgo \
         -ldflags "-X main.gitVersion=${EXEUNTU_GIT_VERSION} -extldflags=-static -s -w" \
         -o /out/exeuntu .
 
-# Build Herdr API from its private GitHub repository. The GitHub credential is
-# supplied as a BuildKit secret and is never copied into a layer or final image.
-FROM docker.io/library/rust:1-bookworm AS herdr-api-builder
-ARG HERDR_API_REPOSITORY=https://github.com/aaronS7/herdr-api.git
-ARG HERDR_API_REF=main
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates git && \
-    rm -rf /var/lib/apt/lists/*
-WORKDIR /src/herdr-api
-RUN --mount=type=secret,id=herdr_api_github_token,required=false \
-    git init . && \
-    git remote add origin "${HERDR_API_REPOSITORY}" && \
-    case "${HERDR_API_REPOSITORY}" in \
-        https://github.com/*) \
-            if [ -s /run/secrets/herdr_api_github_token ]; then \
-                GIT_TERMINAL_PROMPT=0 git \
-                  -c 'credential.helper=!f() { printf "%s\n" "username=x-access-token" "password=$(cat /run/secrets/herdr_api_github_token)"; }; f' \
-                  fetch --depth 1 origin "${HERDR_API_REF}"; \
-            else \
-                GIT_TERMINAL_PROMPT=0 git fetch --depth 1 origin "${HERDR_API_REF}"; \
-            fi \
-            ;; \
-        https://github.int.exe.xyz/*) \
-            GIT_TERMINAL_PROMPT=0 git fetch --depth 1 origin "${HERDR_API_REF}" \
-            ;; \
-        *) \
-            echo "HERDR_API_REPOSITORY must use github.com or the documented exe.dev GitHub integration host" >&2; \
-            exit 1 \
-            ;; \
-    esac && \
-    git checkout --detach FETCH_HEAD && \
-    rm -rf .git && \
-    cargo build --locked --release && \
-    install -Dm0755 target/release/herdr-api /out/herdr-api && \
-    printf '%s\n' "${HERDR_API_REF}" > /out/herdr-api-revision
-
 FROM ubuntu:24.04
 
 # Switch from dash to bash by default.
@@ -311,11 +274,36 @@ RUN chmod 644 /var/www/html/index.html
 COPY xterm-ghostty.terminfo /tmp/xterm-ghostty.terminfo
 RUN tic -x - < /tmp/xterm-ghostty.terminfo && rm /tmp/xterm-ghostty.terminfo
 
-# Install Herdr API and start it with the user's systemd manager. Its separate
-# config unit generates a per-VM bearer token at first boot; no runtime or
-# GitHub secret is baked into the image.
-COPY --from=herdr-api-builder /out/herdr-api /usr/local/bin/herdr-api
-COPY --from=herdr-api-builder /out/herdr-api-revision /usr/local/share/herdr-api/revision
+# Install the architecture-matched static Herdr API release. Make and the image
+# publishing workflow resolve the latest release and pass its version here;
+# direct Docker builds default to the version below.
+ARG TARGETARCH
+ARG HERDR_API_REPOSITORY=aaronS7/herdr-api
+ARG HERDR_API_VERSION=0.1.0
+RUN [[ "${HERDR_API_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && \
+    [[ "${HERDR_API_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] && \
+    case "${TARGETARCH}" in \
+        amd64) expected_arch='x86-64' ;; \
+        arm64) expected_arch='ARM aarch64' ;; \
+        *) echo "Herdr API has no release binary for architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    archive="herdr-api-v${HERDR_API_VERSION}-linux-${TARGETARCH}.tar.gz" && \
+    release_url="https://github.com/${HERDR_API_REPOSITORY}/releases/download/v${HERDR_API_VERSION}" && \
+    mkdir -p /tmp/herdr-api-release /usr/local/share/herdr-api && \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 120 \
+        "${release_url}/${archive}" -o "/tmp/herdr-api-release/${archive}" && \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+        "${release_url}/${archive}.sha256" -o "/tmp/herdr-api-release/${archive}.sha256" && \
+    (cd /tmp/herdr-api-release && sha256sum --check "${archive}.sha256") && \
+    tar -xzf "/tmp/herdr-api-release/${archive}" -C /usr/local/bin herdr-api && \
+    chmod 0755 /usr/local/bin/herdr-api && \
+    file /usr/local/bin/herdr-api | grep -F "${expected_arch}" && \
+    file /usr/local/bin/herdr-api | grep -Eq 'statically linked|static-pie linked' && \
+    printf 'v%s\n' "${HERDR_API_VERSION}" > /usr/local/share/herdr-api/revision && \
+    rm -r /tmp/herdr-api-release
+
+# Start Herdr API with the user's systemd manager. Its separate config unit
+# generates a per-VM bearer token at first boot.
 COPY herdr-api-init /usr/local/libexec/herdr-api-init
 COPY herdr-api-config.service /etc/systemd/user/herdr-api-config.service
 COPY herdr-api.service /etc/systemd/user/herdr-api.service

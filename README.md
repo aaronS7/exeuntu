@@ -25,31 +25,17 @@ make IMAGE=ghcr.io/OWNER/exeuntu-codex:latest
 
 ## Herdr services
 
-The image installs the latest stable Bun, Herdr, and Collie releases and builds
-Herdr API from `aaronS7/herdr-api`. `make` resolves the published versions and
-API commit before building so updated releases invalidate Docker's cached
-layers. For the private API repository, it uses `HERDR_API_GITHUB_TOKEN`,
-`GH_TOKEN`, or the credential returned by `gh auth token` as a BuildKit secret.
+The image installs the latest stable Bun, Herdr, Collie, and Herdr API releases.
+For Herdr API it downloads the static release binary matching the Docker target
+architecture and verifies the published SHA-256 checksum instead of compiling
+Rust under QEMU. `make` and the image publishing workflow resolve the latest
+published versions so updated releases invalidate only the relevant Docker
+layers.
 
-GitHub Actions needs a separate, read-only fine-grained token to fetch that
-private repository. Configure it from an interactive terminal with:
-
-```sh
-./scripts/setup-herdr-api-actions-secret
-```
-
-The script opens (or prints) GitHub's prefilled token-creation page, asks you to
-limit access to `aaronS7/herdr-api`, validates the token, and streams it directly
-to the `HERDR_API_GITHUB_TOKEN` Actions secret in `aaronS7/exeuntu`. GitHub does
-not provide an API that can approve personal access token creation, so generating
-the token still requires one confirmation in the browser. The token is never
-written to disk.
-
-On an exe.dev VM with a read-only GitHub integration attached to that
-repository, build without forwarding a token:
+Pin a particular Herdr API release for a local build with:
 
 ```sh
-HERDR_API_REPOSITORY=https://github.int.exe.xyz/aaronS7/herdr-api.git make
+make HERDR_API_VERSION=0.1.0
 ```
 
 Herdr API starts as a user service. On first boot it creates
@@ -63,10 +49,6 @@ user service:
 ```sh
 herdr plugin action invoke start --plugin herdr.collie
 ```
-
-Keeping the API source private does not hide its compiled binary from people
-who can pull the image. Publish the image privately if the implementation is
-proprietary.
 
 ## Public container image
 

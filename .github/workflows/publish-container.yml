@@ -27,6 +27,33 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Resolve bundled release versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bun_release_url="$(curl -fsSLI --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+            -o /dev/null -w '%{url_effective}' https://github.com/oven-sh/bun/releases/latest)"
+          bun_release_ref="${bun_release_url##*/}"
+          herdr_version="$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+            https://herdr.dev/latest.json | jq -r '.version')"
+          collie_release_url="$(curl -fsSLI --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+            -o /dev/null -w '%{url_effective}' https://github.com/AltanS/collie/releases/latest)"
+          collie_release_ref="${collie_release_url##*/}"
+          herdr_api_release_url="$(curl -fsSLI --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+            -o /dev/null -w '%{url_effective}' https://github.com/aaronS7/herdr-api/releases/latest)"
+          herdr_api_release_ref="${herdr_api_release_url##*/}"
+          herdr_api_version="${herdr_api_release_ref#v}"
+
+          [[ "$bun_release_ref" =~ ^bun-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$herdr_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$collie_release_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$herdr_api_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
+
+          echo "herdr_api_version=$herdr_api_version" >> "$GITHUB_OUTPUT"
+          echo "herdr_toolchain_cache_key=$bun_release_ref-$herdr_version-$collie_release_ref" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -56,8 +83,8 @@ jobs:
           push: true
           build-args: |
             EXEUNTU_GIT_VERSION=${{ github.sha }}
-          secrets: |
-            herdr_api_github_token=${{ secrets.HERDR_API_GITHUB_TOKEN }}
+            HERDR_API_VERSION=${{ steps.versions.outputs.herdr_api_version }}
+            HERDR_TOOLCHAIN_CACHE_KEY=${{ steps.versions.outputs.herdr_toolchain_cache_key }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha

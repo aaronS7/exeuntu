@@ -1,6 +1,6 @@
 IMAGE ?= exeuntu-codex:latest
-HERDR_API_REPOSITORY ?= https://github.com/aaronS7/herdr-api.git
-HERDR_API_REF ?= main
+HERDR_API_REPOSITORY ?= aaronS7/herdr-api
+HERDR_API_VERSION ?= latest
 
 .PHONY: default build-exeuntu build run run-bash test
 
@@ -8,35 +8,23 @@ default: build-exeuntu
 
 build-exeuntu: ## Build the Codex-only exeuntu Docker image locally
 	@echo "Building $(IMAGE)..."
-	@case "$(HERDR_API_REPOSITORY)" in \
-		https://github.com/*) \
-			herdr_api_github_token="$${HERDR_API_GITHUB_TOKEN:-$${GH_TOKEN:-$$(gh auth token 2>/dev/null || true)}}"; \
-			if [ -n "$${herdr_api_github_token}" ]; then \
-				export HERDR_API_GITHUB_TOKEN="$${herdr_api_github_token}"; \
-				herdr_api_ref="$$(GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git \
-					-c credential.helper= \
-					-c 'credential.helper=!f() { printf "%s\n" "username=x-access-token" "password=$$HERDR_API_GITHUB_TOKEN"; }; f' \
-					ls-remote "$(HERDR_API_REPOSITORY)" "$(HERDR_API_REF)" | awk 'NR == 1 { print $$1 }')"; \
-				set -- --secret id=herdr_api_github_token,env=HERDR_API_GITHUB_TOKEN; \
-			else \
-				herdr_api_ref="$$(GIT_TERMINAL_PROMPT=0 git ls-remote \
-					"$(HERDR_API_REPOSITORY)" "$(HERDR_API_REF)" 2>/dev/null | awk 'NR == 1 { print $$1 }')"; \
-				set --; \
-			fi \
-			;; \
-		https://github.int.exe.xyz/*) \
-			herdr_api_ref="$$(GIT_TERMINAL_PROMPT=0 git ls-remote \
-				"$(HERDR_API_REPOSITORY)" "$(HERDR_API_REF)" 2>/dev/null | awk 'NR == 1 { print $$1 }')"; \
-			set -- \
-			;; \
-		*) \
-			echo "HERDR_API_REPOSITORY must use github.com or the documented exe.dev GitHub integration host." >&2; \
-			exit 1 \
-			;; \
-	esac; \
-	if [ -z "$${herdr_api_ref}" ]; then \
-		echo "Unable to resolve $(HERDR_API_REPOSITORY) at $(HERDR_API_REF)." >&2; \
-		echo "Authenticate with gh, set HERDR_API_GITHUB_TOKEN, or use an attached exe.dev GitHub integration URL." >&2; \
+	@set -eu; \
+	herdr_api_repository="$(HERDR_API_REPOSITORY)"; \
+	if ! printf '%s\n' "$${herdr_api_repository}" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$$'; then \
+		echo "Invalid Herdr API release repository: $${herdr_api_repository}" >&2; \
+		exit 1; \
+	fi; \
+	herdr_api_version="$(HERDR_API_VERSION)"; \
+	if [ "$${herdr_api_version}" = latest ]; then \
+		herdr_api_release_url="$$(curl -fsSLI --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+			-o /dev/null -w '%{url_effective}' "https://github.com/$${herdr_api_repository}/releases/latest")"; \
+		herdr_api_release_ref="$${herdr_api_release_url##*/}"; \
+		herdr_api_version="$${herdr_api_release_ref#v}"; \
+	else \
+		herdr_api_version="$${herdr_api_version#v}"; \
+	fi; \
+	if ! printf '%s\n' "$${herdr_api_version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$$'; then \
+		echo "Invalid Herdr API release version: $${herdr_api_version}" >&2; \
 		exit 1; \
 	fi; \
 	bun_release_url="$$(curl -fsSLI --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
@@ -51,9 +39,9 @@ build-exeuntu: ## Build the Codex-only exeuntu Docker image locally
 	case "$${herdr_version}" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "Invalid Herdr release: $${herdr_version}" >&2; exit 1 ;; esac; \
 	case "$${collie_release_ref}" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "Invalid Collie release: $${collie_release_ref}" >&2; exit 1 ;; esac; \
 	herdr_toolchain_cache_key="$${bun_release_ref}-$${herdr_version}-$${collie_release_ref}"; \
-	docker build "$$@" \
-		--build-arg HERDR_API_REPOSITORY="$(HERDR_API_REPOSITORY)" \
-		--build-arg HERDR_API_REF="$${herdr_api_ref}" \
+	docker build \
+		--build-arg HERDR_API_REPOSITORY="$${herdr_api_repository}" \
+		--build-arg HERDR_API_VERSION="$${herdr_api_version}" \
 		--build-arg HERDR_TOOLCHAIN_CACHE_KEY="$${herdr_toolchain_cache_key}" \
 		-t "$(IMAGE)" .
 	@echo "✓ Image built locally as $(IMAGE)"
@@ -62,8 +50,7 @@ build: build-exeuntu
 
 test:
 	cd cli && go test ./...
-	bash -n exeuntu-install init-wrapper.sh motd-snippet.bash \
-		scripts/setup-herdr-api-actions-secret
+	bash -n exeuntu-install init-wrapper.sh motd-snippet.bash
 
 run: build-exeuntu
 	docker run -it \
