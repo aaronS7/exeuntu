@@ -56,6 +56,8 @@ jobs:
           push: true
           build-args: |
             EXEUNTU_GIT_VERSION=${{ github.sha }}
+          secrets: |
+            herdr_api_github_token=${{ secrets.HERDR_API_GITHUB_TOKEN }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha

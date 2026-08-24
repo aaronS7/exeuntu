@@ -13,7 +13,8 @@ build-exeuntu: ## Build the Codex-only exeuntu Docker image locally
 			herdr_api_github_token="$${HERDR_API_GITHUB_TOKEN:-$${GH_TOKEN:-$$(gh auth token 2>/dev/null || true)}}"; \
 			if [ -n "$${herdr_api_github_token}" ]; then \
 				export HERDR_API_GITHUB_TOKEN="$${herdr_api_github_token}"; \
-				herdr_api_ref="$$(GIT_TERMINAL_PROMPT=0 git \
+				herdr_api_ref="$$(GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git \
+					-c credential.helper= \
 					-c 'credential.helper=!f() { printf "%s\n" "username=x-access-token" "password=$$HERDR_API_GITHUB_TOKEN"; }; f' \
 					ls-remote "$(HERDR_API_REPOSITORY)" "$(HERDR_API_REF)" | awk 'NR == 1 { print $$1 }')"; \
 				set -- --secret id=herdr_api_github_token,env=HERDR_API_GITHUB_TOKEN; \
@@ -61,7 +62,8 @@ build: build-exeuntu
 
 test:
 	cd cli && go test ./...
-	bash -n exeuntu-install init-wrapper.sh motd-snippet.bash
+	bash -n exeuntu-install init-wrapper.sh motd-snippet.bash \
+		scripts/setup-herdr-api-actions-secret
 
 run: build-exeuntu
 	docker run -it \

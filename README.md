@@ -31,6 +31,20 @@ API commit before building so updated releases invalidate Docker's cached
 layers. For the private API repository, it uses `HERDR_API_GITHUB_TOKEN`,
 `GH_TOKEN`, or the credential returned by `gh auth token` as a BuildKit secret.
 
+GitHub Actions needs a separate, read-only fine-grained token to fetch that
+private repository. Configure it from an interactive terminal with:
+
+```sh
+./scripts/setup-herdr-api-actions-secret
+```
+
+The script opens (or prints) GitHub's prefilled token-creation page, asks you to
+limit access to `aaronS7/herdr-api`, validates the token, and streams it directly
+to the `HERDR_API_GITHUB_TOKEN` Actions secret in `aaronS7/exeuntu`. GitHub does
+not provide an API that can approve personal access token creation, so generating
+the token still requires one confirmation in the browser. The token is never
+written to disk.
+
 On an exe.dev VM with a read-only GitHub integration attached to that
 repository, build without forwarding a token:
 
