@@ -1,0 +1,19 @@
+[Unit]
+Description=Herdr REST API gateway
+Requires=herdr-api-config.service
+After=herdr-api-config.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+EnvironmentFile=%h/.config/herdr-api.env
+ExecStart=/usr/local/bin/herdr-api
+Restart=on-failure
+RestartSec=2
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

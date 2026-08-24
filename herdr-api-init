@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+
+config_root="${HOME:?HOME is required}/.config"
+config_file="${config_root}/herdr-api.env"
+state_root="${HOME}/.local/state"
+
+if [[ -e "${config_file}" ]]; then
+    exit 0
+fi
+
+umask 077
+install -d -m 0700 "${config_root}"
+api_token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+temporary_config="$(mktemp "${config_root}/.herdr-api.env.XXXXXX")"
+trap 'rm -f "${temporary_config}"' EXIT
+
+{
+    printf '# Generated on first boot by herdr-api-config.service.\n'
+    printf 'HERDR_API_TOKEN=%s\n' "${api_token}"
+    printf 'HERDR_API_BIND=127.0.0.1:8788\n'
+    printf 'HERDR_SOCKET_PATH=%s\n' "${config_root}/herdr/herdr.sock"
+    printf 'HERDR_API_DATABASE_PATH=%s\n' "${state_root}/herdr-api/herdr-api.sqlite"
+    printf 'HERDR_API_REQUEST_TIMEOUT_MS=125000\n'
+    printf 'HERDR_API_SNAPSHOT_INTERVAL_SECS=30\n'
+    printf 'RUST_LOG=herdr_api=info,tower_http=info\n'
+} > "${temporary_config}"
+
+chmod 0600 "${temporary_config}"
+mv "${temporary_config}" "${config_file}"
+trap - EXIT

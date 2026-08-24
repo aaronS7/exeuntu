@@ -23,6 +23,37 @@ for your own registry:
 make IMAGE=ghcr.io/OWNER/exeuntu-codex:latest
 ```
 
+## Herdr services
+
+The image installs the latest stable Bun, Herdr, and Collie releases and builds
+Herdr API from `aaronS7/herdr-api`. `make` resolves the published versions and
+API commit before building so updated releases invalidate Docker's cached
+layers. For the private API repository, it uses `HERDR_API_GITHUB_TOKEN`,
+`GH_TOKEN`, or the credential returned by `gh auth token` as a BuildKit secret.
+
+On an exe.dev VM with a read-only GitHub integration attached to that
+repository, build without forwarding a token:
+
+```sh
+HERDR_API_REPOSITORY=https://github.int.exe.xyz/aaronS7/herdr-api.git make
+```
+
+Herdr API starts as a user service. On first boot it creates
+`~/.config/herdr-api.env` with mode `0600` and listens on
+`127.0.0.1:8788`; port `8787` remains available for Collie. Keep the API on
+loopback and reach it through SSH, a private network, or a TLS reverse proxy.
+
+Run Collie's start action once on a new VM to create and enable its persistent
+user service:
+
+```sh
+herdr plugin action invoke start --plugin herdr.collie
+```
+
+Keeping the API source private does not hide its compiled binary from people
+who can pull the image. Publish the image privately if the implementation is
+proprietary.
+
 ## Public container image
 
 A multi-architecture image for Linux AMD64 and ARM64 is published to GitHub

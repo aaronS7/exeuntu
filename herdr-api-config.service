@@ -1,0 +1,7 @@
+[Unit]
+Description=Create the initial Herdr API configuration
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/herdr-api-init
+RemainAfterExit=yes

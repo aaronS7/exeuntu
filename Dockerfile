@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # Build the guest-facing exeuntu helper.
 FROM docker.io/library/golang:1.26.5 AS exeuntu-cli
 ARG EXEUNTU_GIT_VERSION=unknown
@@ -6,6 +8,43 @@ COPY cli/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags osusergo,netgo \
         -ldflags "-X main.gitVersion=${EXEUNTU_GIT_VERSION} -extldflags=-static -s -w" \
         -o /out/exeuntu .
+
+# Build Herdr API from its private GitHub repository. The GitHub credential is
+# supplied as a BuildKit secret and is never copied into a layer or final image.
+FROM docker.io/library/rust:1-bookworm AS herdr-api-builder
+ARG HERDR_API_REPOSITORY=https://github.com/aaronS7/herdr-api.git
+ARG HERDR_API_REF=main
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates git && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /src/herdr-api
+RUN --mount=type=secret,id=herdr_api_github_token,required=false \
+    git init . && \
+    git remote add origin "${HERDR_API_REPOSITORY}" && \
+    case "${HERDR_API_REPOSITORY}" in \
+        https://github.com/*) \
+            if [ -s /run/secrets/herdr_api_github_token ]; then \
+                GIT_TERMINAL_PROMPT=0 git \
+                  -c 'credential.helper=!f() { printf "%s\n" "username=x-access-token" "password=$(cat /run/secrets/herdr_api_github_token)"; }; f' \
+                  fetch --depth 1 origin "${HERDR_API_REF}"; \
+            else \
+                GIT_TERMINAL_PROMPT=0 git fetch --depth 1 origin "${HERDR_API_REF}"; \
+            fi \
+            ;; \
+        https://github.int.exe.xyz/*) \
+            GIT_TERMINAL_PROMPT=0 git fetch --depth 1 origin "${HERDR_API_REF}" \
+            ;; \
+        *) \
+            echo "HERDR_API_REPOSITORY must use github.com or the documented exe.dev GitHub integration host" >&2; \
+            exit 1 \
+            ;; \
+    esac && \
+    git checkout --detach FETCH_HEAD && \
+    rm -rf .git && \
+    cargo build --locked --release && \
+    install -Dm0755 target/release/herdr-api /out/herdr-api && \
+    printf '%s\n' "${HERDR_API_REF}" > /out/herdr-api-revision
 
 FROM ubuntu:24.04
 
@@ -202,15 +241,37 @@ RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/exedev/.bashrc && \
     echo 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' >> /home/exedev/.bashrc && \
     echo 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' >> /home/exedev/.profile
 
-# Install Herdr in the user-local path so its built-in updater remains writable.
-RUN curl -fsSL https://herdr.dev/install.sh | HERDR_INSTALL_DIR=/home/exedev/.local/bin sh && \
-    /home/exedev/.local/bin/herdr --version
+# Install Bun, the latest stable Herdr, and the latest stable Collie release.
+# Make passes their published versions as a cache key so newly published
+# releases invalidate these layers.
+ARG HERDR_TOOLCHAIN_CACHE_KEY=auto
+RUN test -n "${HERDR_TOOLCHAIN_CACHE_KEY}" && \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 120 \
+      https://bun.sh/install | env BUN_INSTALL=/home/exedev/.local bash && \
+    test -x /home/exedev/.local/bin/bun && \
+    /home/exedev/.local/bin/bun --version
+RUN curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+      https://herdr.dev/install.sh | env HERDR_INSTALL_DIR=/home/exedev/.local/bin sh && \
+    test -x /home/exedev/.local/bin/herdr && \
+    HERDR_LATEST_VERSION=$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+      https://herdr.dev/latest.json | jq -r '.version') && \
+    test "$(/home/exedev/.local/bin/herdr --version)" = "herdr ${HERDR_LATEST_VERSION}"
+RUN COLLIE_RELEASE_URL=$(curl -fsSLI --retry 5 --retry-delay 2 --retry-all-errors --max-time 30 \
+      -o /dev/null -w '%{url_effective}' https://github.com/AltanS/collie/releases/latest) && \
+    COLLIE_RELEASE_REF=${COLLIE_RELEASE_URL##*/} && \
+    [[ "${COLLIE_RELEASE_REF}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
+    /home/exedev/.local/bin/herdr plugin install AltanS/collie \
+      --ref "${COLLIE_RELEASE_REF}" --yes && \
+    test "$(/home/exedev/.local/bin/herdr plugin list --plugin herdr.collie --json | \
+      jq -r '.result.plugins[0].version')" = "${COLLIE_RELEASE_REF#v}"
 
 # Configure git to use 'main' as default branch name
 RUN git config --global init.defaultBranch main
 
 # Switch back to root to install systemd service
 USER root
+RUN ln -sf /home/exedev/.local/bin/bun /usr/local/bin/bun && \
+    ln -sf /home/exedev/.local/bin/herdr /usr/local/bin/herdr
 
 # Disable Ubuntu's default MOTD (the sudo hint, etc.)
 RUN rm -rf /etc/update-motd.d/* /etc/motd && touch /home/exedev/.hushlogin && chown exedev:exedev /home/exedev/.hushlogin
@@ -250,7 +311,20 @@ RUN chmod 644 /var/www/html/index.html
 COPY xterm-ghostty.terminfo /tmp/xterm-ghostty.terminfo
 RUN tic -x - < /tmp/xterm-ghostty.terminfo && rm /tmp/xterm-ghostty.terminfo
 
-# Expose the default web server port.
+# Install Herdr API and start it with the user's systemd manager. Its separate
+# config unit generates a per-VM bearer token at first boot; no runtime or
+# GitHub secret is baked into the image.
+COPY --from=herdr-api-builder /out/herdr-api /usr/local/bin/herdr-api
+COPY --from=herdr-api-builder /out/herdr-api-revision /usr/local/share/herdr-api/revision
+COPY herdr-api-init /usr/local/libexec/herdr-api-init
+COPY herdr-api-config.service /etc/systemd/user/herdr-api-config.service
+COPY herdr-api.service /etc/systemd/user/herdr-api.service
+RUN chmod 0755 /usr/local/libexec/herdr-api-init && \
+    chmod 0644 /etc/systemd/user/herdr-api-config.service \
+        /etc/systemd/user/herdr-api.service && \
+    systemctl --global enable herdr-api.service
+
+# Expose the default web server port. Herdr API and Collie remain loopback-only.
 EXPOSE 8000
 
 LABEL "exe.dev/login-user"="exedev"
