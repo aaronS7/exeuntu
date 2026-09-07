@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Install optional toolsets omitted from the Codex-only exeuntu image.
+Install optional toolsets omitted from the slim exeuntu image.
 
 Usage:
   exeuntu-install <toolset> [version]

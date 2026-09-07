@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
+# Shelley uses this self-contained browser bundle on AMD64 and ARM64.
+FROM docker.io/chromedp/headless-shell:stable AS chrome
+
 # Build the guest-facing exeuntu helper.
 FROM docker.io/library/golang:1.26.5 AS exeuntu-cli
 ARG EXEUNTU_GIT_VERSION=unknown
@@ -35,7 +38,12 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirror://mirrors.ubuntu.c
 		iputils-ping netcat-openbsd \
 		systemd systemd-sysv dbus-user-session \
 		atop btop iotop ncdu \
-		bubblewrap && \
+		bubblewrap \
+		libglib2.0-0 libnss3 libx11-6 libxcomposite1 libxdamage1 \
+		libxext6 libxi6 libxrandr2 libgbm1 libgtk-3-0 \
+		fontconfig fonts-noto-color-emoji fonts-symbola \
+		imagemagick ffmpeg && \
+	fc-cache -f && \
 	locale-gen en_US.UTF-8 && \
 	update-locale LANG=en_US.UTF-8 && \
 	# openssh-server generates host keys during package configuration.
@@ -191,8 +199,15 @@ ENV EXEUNTU=1
 # might be useful?
 # STOPSIGNAL SIGRTMIN+3
 
-RUN mkdir -p /home/exedev /home/exedev/.codex && \
-    chown exedev:exedev /home/exedev /home/exedev/.codex
+# Make the browser available to Shelley and interactive shells.
+COPY --from=chrome /headless-shell /headless-shell
+ENV PATH="/usr/local/bin:/headless-shell:${PATH}"
+# Fail the image build if Chromium is missing runtime libraries.
+RUN headless-shell --version
+
+RUN mkdir -p /home/exedev /home/exedev/.codex /home/exedev/.config/shelley && \
+    chown exedev:exedev /home/exedev /home/exedev/.codex \
+        /home/exedev/.config /home/exedev/.config/shelley
 
 USER exedev
 
@@ -243,6 +258,12 @@ RUN rm -rf /etc/update-motd.d/* /etc/motd && touch /home/exedev/.hushlogin && ch
 COPY motd-snippet.bash /tmp/motd-snippet.bash
 RUN cat /tmp/motd-snippet.bash >> /home/exedev/.bashrc && rm /tmp/motd-snippet.bash
 
+# Socket-activate Shelley; exe.dev installs the binary when creating the VM.
+COPY shelley.socket /etc/systemd/system/shelley.socket
+COPY shelley.service /etc/systemd/system/shelley.service
+RUN chmod 0644 /etc/systemd/system/shelley.socket /etc/systemd/system/shelley.service && \
+    systemctl enable shelley.socket
+
 # Create systemd oneshot service for /exe.dev/setup script
 COPY exe-setup.service /etc/systemd/system/exe-setup.service
 RUN chmod 644 /etc/systemd/system/exe-setup.service && \
@@ -253,11 +274,9 @@ RUN chmod 644 /etc/systemd/system/exe-setup.service && \
 # It would be better if you could indicate that via an env variable or something.
 COPY init-wrapper.sh /usr/local/bin/init
 
-# Configure Codex and install the shared agent instructions.
-RUN mkdir -p /home/exedev/.codex && \
-    chown -R exedev:exedev /home/exedev/.codex
-COPY AGENTS.md /home/exedev/.codex/AGENTS.md
-RUN chown exedev:exedev /home/exedev/.codex/AGENTS.md
+# Install the same guidance for Codex and Shelley.
+COPY --chown=exedev:exedev AGENTS.md /home/exedev/.codex/AGENTS.md
+COPY --chown=exedev:exedev AGENTS.md /home/exedev/.config/shelley/AGENTS.md
 
 # Install Codex through exeuntu's direct updater.
 USER root
@@ -313,8 +332,13 @@ RUN chmod 0755 /usr/local/libexec/herdr-api-init && \
         /etc/systemd/user/herdr-api.service && \
     systemctl --global enable herdr-api.service
 
-# Expose the default web server port. Herdr API and Collie remain loopback-only.
-EXPOSE 8000
+# Verify Shelley prerequisites on every built architecture before publishing.
+COPY tests/shelley-image.bash /tmp/shelley-image.bash
+RUN bash /tmp/shelley-image.bash && rm /tmp/shelley-image.bash
+
+# Default web server and Shelley ports. Shelley binds only to loopback.
+# Herdr API and Collie remain loopback-only.
+EXPOSE 8000 9999
 
 LABEL "exe.dev/login-user"="exedev"
 LABEL "exe.dev/install-shelley"="true"

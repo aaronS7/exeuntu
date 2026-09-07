@@ -6,7 +6,7 @@ HERDR_API_VERSION ?= latest
 
 default: build-exeuntu
 
-build-exeuntu: ## Build the Codex-only exeuntu Docker image locally
+build-exeuntu: ## Build the Codex + Shelley exeuntu Docker image locally
 	@echo "Building $(IMAGE)..."
 	@set -eu; \
 	herdr_api_repository="$(HERDR_API_REPOSITORY)"; \
@@ -50,7 +50,7 @@ build: build-exeuntu
 
 test:
 	cd cli && go test ./...
-	bash -n exeuntu-install init-wrapper.sh motd-snippet.bash
+	bash -n exeuntu-install init-wrapper.sh motd-snippet.bash tests/shelley-image.bash
 
 run: build-exeuntu
 	docker run -it \

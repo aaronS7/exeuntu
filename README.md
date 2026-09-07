@@ -1,14 +1,32 @@
-# exeuntu — Codex-only variant
+# exeuntu — Codex + Shelley variant
 
-A focused exeuntu image for developers who use Codex as their coding agent.
+A focused exeuntu image for developers who use Codex and Shelley as coding agents.
 It remains based on Ubuntu 24.04 and retains systemd, Tailscale, Herdr, common
 command-line development tools, the exe.dev setup service, and Codex
 LLM-integration configuration.
 
-This branch removes the bundled Claude Code, Pi, and Shelley agents, along with
-Pi's exe.dev extension and Shelley's headless Chromium runtime. It also omits the
-large Ubuntu metapackages, Docker, Go, all-locales bundle, restored documentation,
-and Python-heavy utilities from the default image.
+Shelley's socket-activated service, headless Chromium runtime, fonts, and media
+tools are included. Claude Code, Pi, and Pi's exe.dev extension remain omitted,
+as do the large Ubuntu metapackages, Docker, Go, all-locales bundle, restored
+documentation, and Python-heavy utilities.
+
+## Shelley
+
+The `exe.dev/install-shelley=true` image label requests installation of the
+Shelley binary when exe.dev creates a VM. The image enables `shelley.socket`,
+which listens on `127.0.0.1:9999` and starts Shelley on the first connection.
+Access Shelley through exe.dev's authenticated Shelley interface; the service
+requires the proxy's `X-Exedev-Userid` header.
+
+Shelley runs as `exedev`, stores its database and agent guidance in
+`~/.config/shelley/`, and reads the exe.dev-provided `/exe.dev/shelley.json`.
+The browser bundle is on both the service and interactive shell paths.
+The binary and exe.dev configuration are not baked into the image, so running
+this image with plain Docker alone does not start a usable Shelley instance.
+
+Rebuild the image and create a new VM to receive these changes; existing VMs
+are not modified by an image update. The branch and image names below remain
+unchanged for compatibility.
 
 ## Build
 
@@ -82,3 +100,6 @@ documentation omitted from the base image is restored.
 ```sh
 make test
 ```
+
+Image builds also run `tests/shelley-image.bash` to check socket activation,
+user-owned configuration, shared guidance, and the headless browser runtime.
